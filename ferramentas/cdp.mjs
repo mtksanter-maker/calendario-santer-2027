@@ -20,7 +20,7 @@ export async function launch({ port = 9333, width = 1440, height = 900 } = {}) {
     try { info = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json(); } catch { /* aguardando */ }
   }
   if (!info) throw new Error('Edge não abriu a porta de depuração');
-  const page = info.find(t => t.type === 'page');
+  const page = info.find(t => t.type === 'page' && t.url === 'about:blank') || info.find(t => t.type === 'page' && !t.url.startsWith('edge:'));
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
   let id = 0; const pending = new Map(); const listeners = [];
@@ -42,8 +42,13 @@ export async function launch({ port = 9333, width = 1440, height = 900 } = {}) {
     send, errors,
     async viewport(w, h, mobile = false) { await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: mobile ? 2 : 1, mobile }); },
     async goto(url, waitMs = 600) {
-      const loaded = new Promise(r => { const l = m => { if (m.method === 'Page.loadEventFired') { listeners.splice(listeners.indexOf(l), 1); r(); } }; listeners.push(l); });
-      await send('Page.navigate', { url }); await loaded; await sleep(waitMs);
+      let onLoad;
+      const loaded = new Promise(r => { onLoad = m => { if (m.method === 'Page.loadEventFired') { const i = listeners.indexOf(onLoad); if (i >= 0) listeners.splice(i, 1); r(); } }; listeners.push(onLoad); });
+      const navigation = await send('Page.navigate', { url });
+      // Uma mudança apenas no hash não dispara loadEventFired.
+      if (navigation.loaderId) await loaded;
+      else { const i = listeners.indexOf(onLoad); if (i >= 0) listeners.splice(i, 1); }
+      await sleep(waitMs);
     },
     async eval(expr) {
       const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
