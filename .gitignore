@@ -1,3 +1,4 @@
 backups/*.zip
 dados/backups/
 *.tmp
+dist/

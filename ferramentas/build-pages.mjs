@@ -1,0 +1,13 @@
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const dest = resolve(root, 'dist');
+mkdirSync(dest, { recursive: true });
+cpSync(resolve(root, 'web'), dest, { recursive: true });
+cpSync(resolve(root, 'dados'), resolve(dest, 'dados'), { recursive: true, filter: p => !p.includes('backups') });
+let html = readFileSync(resolve(dest, 'index.html'), 'utf8');
+html = html.replace('<script src="js/dados.js">', '<script src="js/pages.js"></script>\n<script src="js/dados.js">');
+writeFileSync(resolve(dest, 'index.html'), html);
+writeFileSync(resolve(dest, '.nojekyll'), '');
+console.log('GitHub Pages: dist/ com calendário e todos os conjuntos de endomarketing.');

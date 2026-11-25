@@ -1,6 +1,50 @@
-# Calendário de Endomarketing 2027: app local
+# Central de Endomarketing 2027: app local
 
-App web do calendário de endomarketing da Santer. Roda no próprio computador, sem instalar nada, porque usa o PowerShell que já vem no Windows. Não tem login.
+## Versão online no GitHub Pages
+
+A publicação inclui o calendário e todos os 15 conjuntos do Endomarketing. As alterações ficam **somente no navegador e dispositivo em uso**; não atualizam o repositório nem a tela de outras pessoas. Não existe sincronização entre usuários. Limpar os dados do site remove essas alterações.
+
+Use **Exportar backup completo** no topo para guardar calendário, plano, LinkedIn, pesquisa e fichas dos 12 meses em um único JSON. **Importar backup completo** restaura esse arquivo em outro navegador. Os dados iniciais publicados são uma cópia dos arquivos de `dados/` no último deploy.
+
+Para gerar: `node ferramentas/build-pages.mjs`. O resultado fica em `dist/`. Para testar: `node ferramentas/servir-pages.mjs`, depois `node ferramentas/testar.mjs http://127.0.0.1:8032/ --pages`. O teste usa um perfil descartável do Edge e não altera os arquivos de dados.
+
+O workflow `.github/workflows/pages.yml` publica automaticamente ao enviar commits para `main`. O adaptador `web/js/pages.js` só é incluído no build estático; o uso local continua com o servidor original.
+
+App web da Santer com dois módulos, escolhidos na barra lateral:
+
+- **Calendário**: o calendário operacional de 2027, com todas as funções de antes (edição, categorias, impressão A4, exportação).
+- **Endomarketing 2027**: o planejamento da campanha *Jeito Santer de Ser*: visão geral, jornada dos 12 meses, planejamento detalhado de cada mês, programas recorrentes, orçamento, produtividade, calendário editorial do LinkedIn e a base de pesquisa.
+
+Roda no próprio computador, sem instalar nada, porque usa o PowerShell que já vem no Windows. Não tem login.
+
+## Endomarketing 2027 em 1 minuto
+
+- **Tudo é editável e salva sozinho.** O indicador no topo mostra “Salvando…” e depois “Salvo às hh:mm”. O botão de seta (ou Ctrl+Z) desfaz a última alteração. Cada gravação guarda a versão anterior em `dados/backups/endo/`.
+- **Status das ações:** Planejado → Aguardando validação → Aprovado → Em execução → Executado → Avaliado (ou Cancelado).
+- **Ligação com o calendário:** enquanto uma ação não está aprovada, as datas dela aparecem no calendário só como camada **“Em planejamento”** (contorno tracejado), sem virar evento oficial. Depois de aprovada, use **Publicar** (aba Resumo do mês) para criar o evento oficial, ou **Vincular** a um evento que já existe. Mudanças posteriores na proposta **não** mudam o evento oficial sozinhas: a tela avisa “Proposta difere do evento oficial” e oferece **Atualizar evento oficial**.
+- No calendário, eventos vinculados mostram **“Ver iniciativa”**, e os eventos de endomarketing mostram **“Ver planejamento do mês”**.
+- Camadas não oficiais no calendário (ligue e desligue na legenda): **Em planejamento**, **Programas recorrentes** (ginástica laboral) e **Publicações do LinkedIn**. Elas não entram na impressão oficial.
+- **Orçamento:** os valores vêm das fichas como **[ESTIMATIVA]**. Itens sem preço aparecem “a cotar” e não contam como zero. O orçamento anual só aparece como aprovado quando alguém marca isso em Orçamento → Definição formal.
+- **LinkedIn:** nada é publicado pelo sistema. O status só registra o que o Marketing fez.
+
+## De onde vêm os dados do Endomarketing
+
+A base de conhecimento está em `..\endo-2027\` (bíblia anual, fichas dos meses, pesquisa, orçamento, LinkedIn e `estruturado\`). Ela foi importada uma vez para `dados/endo/`:
+
+```
+node ferramentas/importar-planejamento.mjs                 # importa só o que ainda não existe
+node ferramentas/importar-planejamento.mjs --substituir    # regrava (guarda a versão atual em dados/backups/endo)
+node ferramentas/importar-planejamento.mjs --substituir --so=pesquisa,linkedin
+```
+
+Depois da importação, **os dados editáveis passam a ser os de `dados/endo/`**. Reimportar com `--substituir` volta os textos e valores aos das fichas (a versão anterior fica no backup); no plano, vínculos com o calendário, status, resultados, gastos realizados, sessões realizadas e pendências resolvidas são preservados.
+
+| Arquivo | Conteúdo | Quando carrega |
+|---|---|---|
+| `plano.json` | campanha, 12 meses (ação, datas, orçamento, impacto, pendências, vínculos), programas e experiências | ao abrir o módulo (e, em segundo plano, para as camadas do calendário) |
+| `mes-01.json` … `mes-12.json` | ficha completa de cada mês (seções em Markdown, etapas, responsáveis, comunicação) | só quando o mês é aberto |
+| `linkedin.json` | 53 pautas semanais + coberturas | só ao abrir o LinkedIn ou ligar a camada |
+| `pesquisa.json` | 147 registros de pesquisa e benchmarking | só ao abrir Pesquisa ou Referências |
 
 ## Como abrir
 
@@ -80,18 +124,48 @@ app-calendario-2027/
 ├─ Iniciar calendario.bat   abre o servidor e o navegador
 ├─ servidor.ps1             servidor local (PowerShell): entrega web/ e grava dados/
 ├─ dados/
-│  ├─ calendario-2027.json  os dados
-│  └─ backups/              cópias automáticas a cada gravação
+│  ├─ calendario-2027.json  os dados do calendário
+│  ├─ endo/                 os dados do Endomarketing 2027 (ver acima)
+│  └─ backups/              cópias automáticas a cada gravação (endo/ para o módulo)
+├─ ferramentas/             importação, testes e medições (Node)
+├─ backups/                 cópias do app inteiro antes das mudanças
 └─ web/
-   ├─ index.html
-   ├─ css/estilo.css        visual (marca Santer + cores da legenda)
-   ├─ js/app.js             todo o app, sem bibliotecas
-   └─ favicon.svg
+   ├─ index.html            shell com a barra lateral
+   ├─ css/base.css          sistema visual: cores, Liquid Glass, componentes
+   ├─ css/estilo.css        calendário (tela e impressão A4)
+   ├─ css/endo.css          módulo Endomarketing (carregado sob demanda)
+   ├─ js/dados.js           leitura e gravação versionada dos dados
+   ├─ js/app.js             calendário, sem bibliotecas
+   ├─ js/shell.js           barra lateral, rotas, aparência
+   └─ js/endo/              núcleo do módulo e uma tela por arquivo (carregadas sob demanda)
 ```
 
-O servidor tem uma API simples:
-- `GET /api/calendario` devolve o JSON.
-- `PUT /api/calendario` grava o JSON. O cabeçalho `X-Versao` evita sobrescrever o trabalho de outra pessoa.
+API do servidor:
+- `GET/PUT /api/calendario`: calendário. O cabeçalho `X-Versao` evita sobrescrever o trabalho de outra pessoa.
+- `GET/PUT /api/endo/<conjunto>` (`plano`, `linkedin`, `pesquisa`, `mes-01`…`mes-12`): mesma regra de versão; recusa (409) se outra pessoa salvou antes.
+- Arquivos estáticos com revalidação (ETag) e compressão gzip guardada em memória.
+
+## Aparência e acessibilidade
+
+- Barra lateral: recolher/expandir (o estado fica guardado) e **Aparência** automática, clara ou escura.
+- Menus, barras de ferramentas, filtros, popovers e painéis usam material translúcido (Liquid Glass); tabelas e textos ficam em superfícies sólidas. Com “Reduzir transparência” ou “Alto contraste” do sistema, o vidro vira superfície sólida. Com “Reduzir movimento”, as animações são desligadas.
+- No celular, a barra lateral vira uma barra inferior.
+
+## Testes e medições (para o TI)
+
+Rode sempre contra uma **cópia** dos dados, nunca contra `dados/` em uso:
+
+```
+powershell -ExecutionPolicy Bypass -File servidor.ps1 -Porta 8031 -SemNavegador -PastaDados C:\caminho\copia-dos-dados
+node ferramentas/testar.mjs http://localhost:8031/          # 71 verificações de ponta a ponta no Edge
+node ferramentas/capturas.mjs http://localhost:8031/ capturas 1440 900 light
+node ferramentas/medir.mjs http://localhost:8031/ medicao.json 9
+```
+
+## Voltar à versão anterior do app
+
+- `backups/antes-central-endomarketing_*.zip` tem o app inteiro (código e dados) de antes destas mudanças.
+- A pasta também é um repositório git local: o primeiro commit é o calendário original.
 
 ## Problemas comuns
 

@@ -20,7 +20,7 @@ const MONTHS = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Jul
 const WD_LONG = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
 const WD_ABBR = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 const WD_1 = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
-const GROUPS = [{ id: 'cal', label: 'Calendário Brasil' }, { id: 'endo', label: 'Endomarketing Santer' }];
+const GROUPS = [{ id: 'cal', label: 'Calendário Brasil' }, { id: 'endo', label: 'Endomarketing Santer' }, { id: 'op', label: 'Compromissos operacionais' }];
 const DEFAULT_CATS = [
   {
     "id": "feriado",
@@ -147,13 +147,13 @@ const SRC = (() => {
   return {
     css: cssEl && cssEl.tagName === 'STYLE' ? cssEl.textContent : '',
     js: jsEl && !jsEl.src ? jsEl.textContent : '',
-    cssUrl: (document.querySelector('link[data-app-css]') || {}).href || '',
+    cssUrls: Array.from(document.querySelectorAll('link[data-app-css]')).map(l => l.href),
     jsUrl: jsEl && jsEl.src ? jsEl.src : '',
     reset
   };
 })();
 async function sources() {
-  if (!SRC.css && SRC.cssUrl) SRC.css = await fetch(SRC.cssUrl, { cache: 'no-store' }).then(r => r.text());
+  if (!SRC.css && SRC.cssUrls.length) SRC.css = (await Promise.all(SRC.cssUrls.map(u => fetch(u, { cache: 'no-store' }).then(r => r.text())))).join('\n');
   if (!SRC.js && SRC.jsUrl) SRC.js = await fetch(SRC.jsUrl, { cache: 'no-store' }).then(r => r.text());
   return SRC;
 }
@@ -210,7 +210,7 @@ function normalize(raw) {
   const addCat = c => {
     if (!c || !/^[a-z0-9][a-z0-9-]*$/.test(c.id || '') || seen.has(c.id)) return;
     seen.add(c.id);
-    out.categories.push({ id: c.id, label: String(c.label || c.id), group: c.group === 'cal' ? 'cal' : 'endo', color: hexOk(c.color) ? c.color.toUpperCase() : '#A7B4C6', dark: hexOk(c.dark) ? c.dark.toUpperCase() : '' });
+    out.categories.push({ id: c.id, label: String(c.label || c.id), group: GROUPS.some(g => g.id === c.group) ? c.group : 'endo', color: hexOk(c.color) ? c.color.toUpperCase() : '#A7B4C6', dark: hexOk(c.dark) ? c.dark.toUpperCase() : '' });
   };
   (Array.isArray(raw.categories) && raw.categories.length ? raw.categories : DEFAULT_CATS).forEach(addCat);
   for (let m = 0; m < 12; m++) {
@@ -270,7 +270,7 @@ catStyle.id = 'cat-colors';
 function syncCats() {
   CM = new Map(work.categories.map(c => [c.id, c]));
   CO = new Map(work.categories.map((c, i) => [c.id, i]));
-  Array.from(ui.hidden).forEach(id => { if (!CM.has(id)) ui.hidden.delete(id); });
+  Array.from(ui.hidden).forEach(id => { if (!CM.has(id) && !/^lyr-/.test(id)) ui.hidden.delete(id); });
   const L = [], D = [];
   work.categories.forEach(c => {
     const dk = hexOk(c.dark) ? c.dark : shade(c.color, 0.1);
@@ -279,27 +279,98 @@ function syncCats() {
   });
   catStyle.textContent = `:root{${L.join(';')}}@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){${D.join(';')}}}:root[data-theme="dark"]{${D.join(';')}}`;
 }
-const catOf = id => CM.get(id) || { id, label: 'Sem categoria', group: 'endo', color: '#A7B4C6' };
+const catOf = id => CM.get(id) || (/^lyr-/.test(id) && LM.get(id) ? { id, label: LM.get(id).label, group: 'lyr', color: '#4A57A8' } : { id, label: 'Sem categoria', group: 'endo', color: '#A7B4C6' });
 const orderOf = id => (CO.has(id) ? CO.get(id) : 999);
 const groupLabel = g => (GROUPS.find(x => x.id === g) || GROUPS[1]).label;
-const countByCat = () => { const n = {}; work.events.forEach(e => { n[e.c] = (n[e.c] || 0) + 1; }); return n; };
+const countByCat = () => { const n = {}; work.events.forEach(e => { n[e.c] = (n[e.c] || 0) + 1; }); VIRT.forEach(e => { n[e.c] = (n[e.c] || 0) + 1; }); return n; };
 const sortEvents = list => list.sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : 0) || (orderOf(a.c) - orderOf(b.c)) || a.t.localeCompare(b.t, 'pt'));
 function freeColor() {
   const used = new Set(work.categories.map(c => c.color.toUpperCase()));
   return PRESETS.find(h => !used.has(h.toUpperCase())) || PRESETS[7];
 }
 function makeCat(spec, w) {
-  const base = slug(spec.label);
+  const base = slug(spec.label).replace(/^lyr-/, 'cat-lyr-');
   let id = base, i = 2;
   while (w.categories.some(c => c.id === id)) id = `${base}-${i++}`;
-  return { id, label: spec.label, group: spec.group === 'cal' ? 'cal' : 'endo', color: hexOk(spec.color) ? spec.color.toUpperCase() : freeColor(), dark: '' };
+  return { id, label: spec.label, group: GROUPS.some(g => g.id === spec.group) ? spec.group : 'endo', color: hexOk(spec.color) ? spec.color.toUpperCase() : freeColor(), dark: '' };
 }
+
+/* ---------- Camadas do Endomarketing 2027 (integração com o módulo de planejamento) ----------
+   Fonte única: dados/endo/plano.json e linkedin.json. Nada disso é gravado no calendário oficial:
+   são camadas de leitura, com aparência própria. Só vira evento oficial quando alguém publica uma ação
+   aprovada a partir do módulo Endomarketing (e o vínculo fica registrado no plano). */
+const LAYERS = [
+  { id: 'lyr-plan', label: 'Em planejamento', kind: 'plan', tag: 'Em planejamento' },
+  { id: 'lyr-prog', label: 'Programas recorrentes', kind: 'prog', tag: 'Programa recorrente' },
+  { id: 'lyr-li', label: 'Publicações do LinkedIn', kind: 'li', tag: 'LinkedIn' }
+];
+const LM = new Map(LAYERS.map(l => [l.id, l]));
+const K_LAYERS = 'santer-endo-2027:camadas-v1';
+const ST_LABEL = { planejado: 'Planejado', 'aguardando-validacao': 'Aguardando validação', aprovado: 'Aprovado', 'em-execucao': 'Em execução', executado: 'Executado', avaliado: 'Avaliado', cancelado: 'Cancelado', proposta: 'Proposta', 'em-producao': 'Em produção', agendado: 'Agendado', publicado: 'Publicado' };
+const hasEndo = !!(window.SanterDados && window.SanterDados.disponivel);
+const PLAN_MARCOS = new Set(['lancamento', 'execucao', 'devolutiva']);
+let PLAN = null, LI = null, liLoading = false, VIRT = [], LINKED = new Map();
+if (!local.get(K_LAYERS)) { ui.hidden.add('lyr-li'); local.set(K_LAYERS, '1'); local.set(K_FILTERS, JSON.stringify(Array.from(ui.hidden))); }
+const endoHref = m => `#/endo/mes/${pad(m)}`;
+function rebuildVirtual() {
+  const out = []; LINKED = new Map();
+  if (PLAN) {
+    const linkOf = (vs, href, label) => (vs || []).forEach(v => { if (v.eventId) LINKED.set(v.eventId, { href, label }); });
+    (PLAN.meses || []).forEach(mo => {
+      const a = mo.acao || {}, href = endoHref(mo.m);
+      linkOf(mo.vinculos, href, a.nome);
+      const pub = new Set((mo.vinculos || []).filter(v => v.dataId && work.events.some(e => e.id === v.eventId)).map(v => v.dataId));
+      (a.datas || []).forEach(d => {
+        if (!/^2027-\d\d-\d\d$/.test(d.data || '') || pub.has(d.id) || a.status === 'cancelado' || !PLAN_MARCOS.has(d.tipo)) return;
+        out.push({ d: d.data, e: '', c: 'lyr-plan', t: `${a.nome}: ${d.rotulo}`, n: `${d.fim && d.fim > d.data ? 'Até ' + fmtShort(d.fim) + '. ' : ''}Proposta do Endomarketing 2027 · ${ST_LABEL[a.status] || a.status}. Não é um evento oficial do calendário.`, o: '', inc: [], id: 'v-' + d.id, v: 'plan', href });
+      });
+    });
+    (PLAN.experiencias || []).forEach(x => {
+      const href = '#/endo/programas?id=' + x.id;
+      linkOf(x.vinculos, href, x.nome);
+      const pub = (x.vinculos || []).some(v => work.events.some(e => e.id === v.eventId));
+      if (!pub && /^2027-\d\d-\d\d$/.test(x.dataProvisoria || '') && x.status !== 'cancelado') out.push({ d: x.dataProvisoria, e: '', c: 'lyr-plan', t: `${x.nome} (data provisória)`, n: `Experiência presencial proposta · ${ST_LABEL[x.status] || x.status}. ${x.janela || ''}`.trim(), o: '', inc: [], id: 'v-' + x.id, v: 'plan', href });
+    });
+    (PLAN.programas || []).forEach(p => {
+      const href = '#/endo/programas?id=' + p.id;
+      linkOf(p.vinculos, href, p.nome);
+      if (p.status === 'cancelado') return;
+      const feitas = new Set(p.sessoesRealizadas || []);
+      (p.sessoes || []).forEach(d => {
+        if (!/^2027-\d\d-\d\d$/.test(d)) return;
+        out.push({ d, e: '', c: 'lyr-prog', t: p.nome, n: `${p.frequencia || 'Recorrente'} · ${(p.turmas || []).length} turmas escalonadas · ${p.minutosExercicio || 5} min de exercício por participante${feitas.has(d) ? ' · sessão registrada como realizada' : ''}. Programa permanente, não é uma campanha nova.`, o: '', inc: [], id: `v-${p.id}-${d}`, v: 'prog', href });
+      });
+    });
+  }
+  if (LI) (LI.posts || []).forEach(p => {
+    if (!/^2027-\d\d-\d\d$/.test(p.data || '') || p.status === 'cancelado') return;
+    out.push({ d: p.data, e: '', c: 'lyr-li', t: `${p.tipo === 'cobertura' ? 'Cobertura' : 'LinkedIn'}: ${p.tema}`, n: `${p.formato || ''} · ${ST_LABEL[p.status] || p.status}${p.responsavel ? ' · ' + p.responsavel : ''}. Publicação manual; nada é publicado automaticamente.`, o: '', inc: [], id: 'v-' + p.id, v: 'li', href: '#/endo/linkedin?post=' + p.id });
+  });
+  VIRT = out;
+}
+function redrawLayers() {
+  renderLegend(); renderYear(); refreshPopover(); markSel();
+  if (!sheet.hidden) { $('#sh-head').innerHTML = sheetHeadHTML(ui.month); renderPanes(); trackSpring.jump(0); renderList(true); }
+}
+function loadLinkedIn() {
+  if (LI || liLoading || !hasEndo) return;
+  liLoading = true;
+  window.SanterDados.get('linkedin').then(d => { LI = d; rebuildVirtual(); redrawLayers(); }).catch(() => toast('Não foi possível carregar o calendário editorial do LinkedIn.')).finally(() => { liLoading = false; });
+}
+function initLayers() {
+  if (!hasEndo) return;
+  window.SanterDados.on('plano', d => { PLAN = d; rebuildVirtual(); redrawLayers(); });
+  window.SanterDados.on('linkedin', d => { LI = d; rebuildVirtual(); redrawLayers(); });
+  window.SanterDados.get('plano').then(d => { if (PLAN !== d) { PLAN = d; rebuildVirtual(); redrawLayers(); } }).catch(() => { /* módulo sem dados: o calendário segue sem as camadas */ });
+  if (!ui.hidden.has('lyr-li')) loadLinkedIn();
+}
+const planMonth = m => PLAN && (PLAN.meses || []).find(x => x.m === m + 1);
 
 const visible = ev => !ui.hidden.has(ev.c);
 let IDX = new Map();
 function buildIndex() {
   const map = new Map();
-  for (const ev of work.events) {
+  for (const ev of work.events.concat(VIRT)) {
     if (!visible(ev)) continue;
     const end = ev.e && ev.e > ev.d ? ev.e : ev.d;
     let d = ev.d, guard = 0;
@@ -314,16 +385,16 @@ function buildIndex() {
 }
 function eventsInMonth(m) {
   const a = key(m, 1), b = key(m, daysIn(m));
-  return work.events.filter(ev => visible(ev) && ev.d <= b && (ev.e || ev.d) >= a);
+  return work.events.concat(VIRT).filter(ev => visible(ev) && ev.d <= b && (ev.e || ev.d) >= a);
 }
 
 /* ---------- Estrutura da página ---------- */
 const app = document.getElementById('app');
 app.innerHTML = `
-<header class="top" id="top"><div class="top-in">
-  <div class="brand"><span class="eyebrow">Santer Empreendimentos · Endomarketing</span><h1 class="title">Calendário de Endomarketing <b>2027</b></h1></div>
+<header class="top glass glass-live" id="top"><div class="top-in">
+  <div class="brand"><span class="eyebrow">Santer Empreendimentos · Calendário operacional</span><h1 class="title">Calendário <b>2027</b></h1></div>
   <div class="actions">
-    <div class="search" id="search">${I.search}<input id="q" type="search" placeholder="Buscar data ou profissão" autocomplete="off" aria-label="Buscar no calendário" aria-controls="results"><div class="results" id="results" hidden></div></div>
+    <div class="search" id="search">${I.search}<input id="q" type="search" placeholder="Buscar data ou profissão" autocomplete="off" aria-label="Buscar no calendário" aria-controls="results"><div class="results glass-strong" id="results" hidden></div></div>
     <button type="button" class="btn" id="btn-export" aria-haspopup="true" aria-expanded="false">${I.download}<span>Arquivo</span></button>
     <button type="button" class="btn" id="btn-print">${I.print}<span>Imprimir</span></button>
     <button type="button" class="btn primary" id="btn-edit" aria-pressed="false">${I.pencil}<span>Editar</span></button>
@@ -337,7 +408,7 @@ app.innerHTML = `
 <p class="sr" id="live" aria-live="polite"></p>`;
 
 const el = (tag, cls, attrs) => { const n = document.createElement(tag); if (cls) n.className = cls; if (attrs) Object.keys(attrs).forEach(k => n.setAttribute(k, attrs[k])); return n; };
-const pop = el('div', 'pop', { role: 'dialog', 'aria-modal': 'false' }); pop.hidden = true;
+const pop = el('div', 'pop glass-strong', { role: 'dialog', 'aria-modal': 'false' }); pop.hidden = true;
 const scrim = el('div', 'scrim'); scrim.hidden = true;
 const sheet = el('div', 'sheet', { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'sh-title' }); sheet.hidden = true;
 sheet.innerHTML = `<div class="sh-head" id="sh-head"></div>
@@ -347,9 +418,9 @@ sheet.innerHTML = `<div class="sh-head" id="sh-head"></div>
   <div class="mv-list" id="mv-list"></div>
 </div>`;
 const mScrim = el('div', 'm-scrim'); mScrim.hidden = true;
-const modal = el('div', 'modal', { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'm-title' }); modal.hidden = true;
+const modal = el('div', 'modal glass-strong', { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'm-title' }); modal.hidden = true;
 const ebWrap = el('div', 'eb-wrap'); ebWrap.hidden = true;
-ebWrap.innerHTML = `<div class="editbar" role="region" aria-label="Modo de edição">
+ebWrap.innerHTML = `<div class="editbar glass-strong glass-live" role="region" aria-label="Modo de edição">
   <span class="eb-dot"></span><span class="eb-t"><b>Modo de edição</b><span id="eb-status">Tudo salvo</span></span>
   <button type="button" class="btn sm ghost" id="eb-add">${I.plus}<span>Nova data</span></button>
   <button type="button" class="btn sm ghost" id="eb-cats">${I.tag}<span>Categorias</span></button>
@@ -360,7 +431,7 @@ ebWrap.innerHTML = `<div class="editbar" role="region" aria-label="Modo de ediç
 const toastWrap = el('div', 'toast-wrap'); toastWrap.hidden = true;
 const toastEl = el('div', 'toast', { role: 'status', 'aria-live': 'polite' });
 toastWrap.appendChild(toastEl);
-const menu = el('div', 'menu', { role: 'menu' }); menu.hidden = true;
+const menu = el('div', 'menu glass-strong', { role: 'menu' }); menu.hidden = true;
 const fileInput = el('input', '', { type: 'file', accept: '.json,.html,.htm,application/json,text/html', 'aria-hidden': 'true', tabindex: '-1' });
 fileInput.hidden = true;
 [pop, scrim, sheet, mScrim, modal, menu, ebWrap, toastWrap, fileInput].forEach(n => document.body.appendChild(n));
@@ -378,7 +449,9 @@ function renderLegend() {
     const list = work.categories.filter(c => c.group === g.id);
     return list.length ? `<div class="lg-group"><span class="lg-label">${g.label}</span><div class="chips">${list.map(chip).join('')}</div></div>` : '';
   }).join('');
-  $('#legend').innerHTML = `${groups}
+  const lchip = l => `<button type="button" class="chip lyr" data-cat="${l.id}" aria-pressed="${!ui.hidden.has(l.id)}" style="--c:var(--c-${l.id})" title="${l.id === 'lyr-plan' ? 'Datas propostas no Endomarketing 2027 que ainda não são eventos oficiais' : l.id === 'lyr-prog' ? 'Sessões de programas permanentes, como a ginástica laboral' : 'Pautas editoriais e coberturas planejadas para o LinkedIn'}"><span class="sw"></span>${esc(l.label)}<span class="n">${l.id === 'lyr-li' && !LI ? '' : (counts[l.id] || 0)}</span></button>`;
+  const layers = hasEndo && PLAN ? `<div class="lg-group"><span class="lg-label">Endomarketing 2027 · camadas não oficiais</span><div class="chips">${LAYERS.map(lchip).join('')}</div></div>` : '';
+  $('#legend').innerHTML = `${groups}${layers}
     <div class="lg-group"><span class="lg-label">Destaque</span><div class="chips"><button type="button" class="chip nw" data-only-new aria-pressed="${ui.onlyNew}"><span class="badge-new">Novo</span>Só o que é novo em 2027<span class="n">${nNew}</span></button>
     ${editing ? `<button type="button" class="chip manage" data-open-cats>${I.tag}Gerenciar categorias</button>` : ''}</div></div>`;
 }
@@ -386,7 +459,7 @@ function renderLegend() {
 /* ---------- Ano ---------- */
 function fillFor(evs) {
   const cats = [];
-  evs.forEach(ev => { if (cats.indexOf(ev.c) < 0) cats.push(ev.c); });
+  evs.forEach(ev => { if (!ev.v && cats.indexOf(ev.c) < 0) cats.push(ev.c); });
   cats.sort((a, b) => orderOf(a) - orderOf(b));
   if (!cats.length) return { cats, style: '' };
   const fill = cats.length === 1 ? `var(--c-${cats[0]})` : `linear-gradient(135deg,var(--c-${cats[0]}) 0 50%,var(--c-${cats[1]}) 50% 100%)`;
@@ -399,17 +472,23 @@ function monthCardHTML(m) {
   for (let d = 1; d <= dim; d++) {
     const k = key(m, d), evs = IDX.get(k) || [], w = (f + d - 1) % 7, ff = fillFor(evs);
     const cls = ['day'];
+    let mk = '';
     if (w === 0 || w === 6) cls.push('we');
-    if (evs.length) cls.push('has');
+    if (ff.cats.length) cls.push('has');
+    if (evs.some(e => e.v === 'plan')) { cls.push('vp'); mk += '<span class="mk mk-p"></span>'; }
+    if (evs.some(e => e.v === 'prog')) { cls.push('vr'); mk += '<span class="mk mk-r"></span>'; }
+    if (evs.some(e => e.v === 'li')) { cls.push('vl'); mk += '<span class="mk mk-l"></span>'; }
     if (ff.cats.length > 2) cls.push('m3');
     if (evs.some(e => e.o === 'novo')) cls.push('nw');
     if (k === TODAY) cls.push('today');
     if (popState.open && k === ui.popDate) cls.push('sel');
     const label = `${d} de ${MONTHS[m].toLowerCase()}, ${WD_LONG[w].toLowerCase()}${evs.length ? ': ' + evs.map(e => e.t).join('; ') : ''}`;
-    cells += `<button type="button" class="${cls.join(' ')}" data-date="${k}"${ff.style ? ` style="${ff.style}"` : ''} aria-label="${esc(label)}">${d}</button>`;
+    cells += `<button type="button" class="${cls.join(' ')}" data-date="${k}"${ff.style ? ` style="${ff.style}"` : ''} aria-label="${esc(label)}">${d}${mk}</button>`;
   }
-  const n = eventsInMonth(m).length;
-  const camp = mo.camp ? `<span class="mcamp"><i class="cdot" style="--cc:${campHex(mo.cor)}"></i>${esc(mo.camp)}</span>` : '';
+  const n = eventsInMonth(m).filter(e => !e.v).length;
+  const pm = planMonth(m);
+  const camp = (mo.camp ? `<span class="mcamp"><i class="cdot" style="--cc:${campHex(mo.cor)}"></i>${esc(mo.camp)}</span>` : '')
+    + (pm && pm.acao && pm.acao.nome ? `<span class="mplan" title="Ação principal do Endomarketing 2027">${esc(pm.acao.nome)}</span>` : '');
   return `<section class="mcard" data-month="${m}" aria-labelledby="mn-${m}">
     <button type="button" class="mhead" data-open-month="${m}" aria-label="Abrir ${MONTHS[m]}: ${plural(n, 'data', 'datas')}">
       <span class="mh-l"><span class="mname" id="mn-${m}">${MONTHS[m]}</span>${camp}</span>
@@ -427,14 +506,28 @@ function renderYear() {
 /* ---------- Item de data ---------- */
 function evHTML(ev) {
   const cat = catOf(ev.c);
+  if (ev.v) {
+    const l = LM.get(ev.c) || {};
+    return `<li class="ev virt k-${ev.v}" style="--c:var(--c-${ev.c})">
+      <span class="bar" aria-hidden="true"></span>
+      <div class="ev-b"><div class="ev-t">${esc(ev.t)}</div>
+        <div class="ev-m"><span class="kind">${esc(l.tag || '')}</span>${ev.e ? `<span>${fmtShort(ev.d)} a ${fmtShort(ev.e)}</span>` : ''}</div>
+        ${ev.n ? `<div class="ev-n">${esc(ev.n)}</div>` : ''}
+        <a class="ev-link" href="${esc(ev.href)}">Abrir no Endomarketing 2027${I.chev}</a>
+      </div><div></div></li>`;
+  }
+  const lk = LINKED.get(ev.id);
+  const pmo = !lk && PLAN && cat.group === 'endo' ? planMonth(parts(ev.d).m) : null;
+  const endoLink = lk ? `<a class="ev-link" href="${esc(lk.href)}">Ver iniciativa: ${esc(lk.label)}${I.chev}</a>`
+    : pmo ? `<a class="ev-link" href="${endoHref(pmo.m)}">Ver planejamento de ${MONTHS[pmo.m - 1].toLowerCase()}${I.chev}</a>` : '';
   const range = ev.e ? `<span>${fmtShort(ev.d)} a ${fmtShort(ev.e)}</span>` : '';
   const origin = ev.o === 'novo' ? '<span class="badge-new">Novo</span>' : ev.o === '2026' ? '<span class="o26">Base 2026</span>' : '';
   const inc = ev.inc && ev.inc.length ? `<p class="ev-inc-l">Inclui</p><ul class="ev-inc">${ev.inc.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '';
   return `<li class="ev${ev.o === 'novo' ? ' is-new' : ''}" style="--c:var(--c-${ev.c})">
     <span class="bar" aria-hidden="true"></span>
     <div class="ev-b"><div class="ev-t">${esc(ev.t)}</div>
-      <div class="ev-m"><span>${esc(cat.label)}</span>${range}${origin}</div>
-      ${ev.n ? `<div class="ev-n">${esc(ev.n)}</div>` : ''}${inc}
+      <div class="ev-m"><span>${esc(cat.label)}</span>${range}${origin}${lk ? '<span class="linked">◆ Ação da campanha</span>' : ''}</div>
+      ${ev.n ? `<div class="ev-n">${esc(ev.n)}</div>` : ''}${inc}${endoLink}
     </div>
     <div class="ev-tools">
       <button type="button" class="btn sm icon ghost" data-edit-ev="${ev.id}" aria-label="Editar ${esc(ev.t)}">${I.pencil}</button>
@@ -525,7 +618,9 @@ function measureFlip(m) {
 }
 function sheetHeadHTML(m) {
   const mo = work.months[m];
-  const camp = mo.camp ? `<span class="camp-pill"><i class="cdot" style="--cc:${campHex(mo.cor)}"></i><span>${esc(mo.camp)}${mo.tema ? ' · ' + esc(mo.tema) : ''}</span></span>` : '';
+  const pm = planMonth(m);
+  const camp = (mo.camp ? `<span class="camp-pill"><i class="cdot" style="--cc:${campHex(mo.cor)}"></i><span>${esc(mo.camp)}${mo.tema ? ' · ' + esc(mo.tema) : ''}</span></span>` : '')
+    + (pm && pm.acao ? `<a class="plan-pill" href="${endoHref(pm.m)}" title="Abrir o planejamento do mês no Endomarketing 2027"><span>Endomarketing 2027 · <b>${esc(pm.acao.nome)}</b> · ${esc(ST_LABEL[pm.acao.status] || pm.acao.status)}</span></a>` : '');
   return `<button type="button" class="btn sm" data-close-sheet aria-label="Voltar para o ano">${I.left}<span>2027</span></button>
     <h2 class="sh-title" id="sh-title"><b>${MONTHS[m]}</b><span>2027</span></h2>
     ${camp}${editing ? `<button type="button" class="btn sm ghost" data-edit-camp="${m}">${I.pencil}<span>Campanha do mês</span></button>` : ''}
@@ -546,9 +641,9 @@ function paneHTML(m) {
     if (w === 0 || w === 6) cls.push('we');
     if (evs.some(e => e.c === 'feriado')) cls.push('hol');
     if (evs.some(e => e.o === 'novo')) cls.push('nw');
-    const chips = evs.slice(0, 3).map(e => `<span class="chipx" style="--c:var(--c-${e.c})">${esc(e.t)}</span>`).join('');
+    const chips = evs.slice(0, 3).map(e => `<span class="chipx${e.v ? ' virt k-' + e.v : ''}" style="--c:var(--c-${e.c})">${esc(e.t)}</span>`).join('');
     const more = evs.length > 3 ? `<span class="plus">+${evs.length - 3}</span>` : '';
-    const dots = evs.length ? `<span class="dots">${evs.slice(0, 6).map(e => `<i style="--c:var(--c-${e.c})"></i>`).join('')}</span>` : '';
+    const dots = evs.length ? `<span class="dots">${evs.slice(0, 6).map(e => `<i${e.v ? ' class="virt"' : ''} style="--c:var(--c-${e.c})"></i>`).join('')}</span>` : '';
     const label = `${d} de ${MONTHS[m].toLowerCase()}${evs.length ? ': ' + evs.map(e => e.t).join('; ') : ', sem datas'}`;
     cells += `<button type="button" class="${cls.join(' ')}" data-cell="${k}" aria-label="${esc(label)}"><span class="num">${d}</span>${chips}${more}${dots}</button>`;
   }
@@ -898,8 +993,9 @@ function closePrintPreview() {
   document.body.classList.remove('print-mode'); lockScroll(sheetState.open);
   if (printState.focus && printState.focus.isConnected) printState.focus.focus({ preventScroll: true });
 }
+const calAtivo = () => { const m = document.getElementById('mod-cal'); return !m || !m.hidden; };
 window.addEventListener('beforeprint', () => {
-  if (!printState.open) {
+  if (!printState.open && calAtivo()) {
     printState.nativeOnly = true; printState.scope = 'all';
     printShell.hidden = false; document.body.classList.add('print-mode');
     renderPrintPages();
@@ -1349,7 +1445,7 @@ async function save(force) {
           { label: 'Carregar a versão salva', fn: reloadFromServer }
         ]);
       } else if (!r.ok) toast('O servidor recusou a gravação. Tente de novo; se continuar, reinicie o “Iniciar calendario”.');
-      else { saved = clone(work); history = []; hideNotice(); toast('Salvo. A versão anterior ficou guardada em dados/backups.'); }
+      else { saved = clone(work); history = []; hideNotice(); rebuildVirtual(); toast(window.SANTER_PAGES ? 'Salvo neste navegador. Use Exportar backup completo para guardar todos os módulos.' : 'Salvo. A versão anterior ficou guardada em dados/backups.'); window.dispatchEvent(new CustomEvent('santer:calendario')); }
     } else if (mode === 'publish') {
       sess.set(K_DRAFT, JSON.stringify(data));
       try {
@@ -1507,7 +1603,7 @@ function checkDraft() {
 
 /* ---------- Eventos ---------- */
 function toggleCat(c) {
-  if (ui.hidden.has(c)) ui.hidden.delete(c); else ui.hidden.add(c);
+  if (ui.hidden.has(c)) { ui.hidden.delete(c); if (c === 'lyr-li') loadLinkedIn(); } else ui.hidden.add(c);
   local.set(K_FILTERS, JSON.stringify(Array.from(ui.hidden)));
   renderLegend(); renderYear(); refreshPopover(); markSel();
   if (!sheet.hidden) { renderPanes(); trackSpring.jump(0); renderList(true); }
@@ -1628,7 +1724,7 @@ document.addEventListener('keydown', e => {
     if (e.key === 'ArrowRight') { e.preventDefault(); navMonth(1); }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); navMonth(-1); }
   }
-  if (editing && (e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && !isTyping(e.target)) { e.preventDefault(); undo(); }
+  if (editing && calAtivo() && (e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && !isTyping(e.target)) { e.preventDefault(); undo(); }
 });
 window.addEventListener('scroll', () => {
   top.classList.toggle('scrolled', window.scrollY > 4);
@@ -1642,17 +1738,65 @@ window.addEventListener('resize', () => {
 });
 window.addEventListener('beforeunload', e => { if ((mode === 'local' || mode === 'server') && dirtyCount()) { e.preventDefault(); e.returnValue = ''; } });
 
+/* ---------- API para o módulo Endomarketing 2027 ----------
+   O módulo lê os eventos oficiais (versão salva) e, quando uma ação está aprovada, pede para publicar
+   ou atualizar o evento correspondente. Toda gravação passa pelo mesmo controle de versão do botão Salvar. */
+let readyResolve; const calReady = new Promise(r => { readyResolve = r; });
+const dataOk = s => /^2027-\d\d-\d\d$/.test(s || '');
+async function persistNow(mutate, check) {
+  await capsReady;
+  if (check && !check()) return { ok: false, erro: 'Data inválida: informe uma data de 2027 (AAAA-MM-DD).' };
+  if (mode !== 'server') return { ok: false, erro: 'Publicar no calendário só funciona no app local (Iniciar calendario).' };
+  if (dirtyCount()) return { ok: false, erro: 'O calendário tem alterações não salvas. Salve ou descarte no calendário antes de publicar daqui.' };
+  const before = clone(work);
+  const result = mutate(work);
+  work.updated = new Date().toISOString();
+  let r = null;
+  try { r = await fetch(API, { method: 'PUT', headers: { 'Content-Type': 'application/json; charset=utf-8', 'X-Versao': saved.updated || '' }, body: JSON.stringify(serialize(work)) }); } catch (e) { r = null; }
+  if (!r || !r.ok) {
+    work = before; afterChange();
+    return { ok: false, erro: !r ? 'Não foi possível falar com o servidor.' : r.status === 409 ? 'Outra pessoa salvou o calendário agora há pouco. Recarregue a página e tente de novo.' : 'O servidor recusou a gravação.' };
+  }
+  saved = clone(work); history = [];
+  rebuildVirtual(); afterChange();
+  window.dispatchEvent(new CustomEvent('santer:calendario'));
+  return Object.assign({ ok: true }, result || {});
+}
+const pubEvent = ev => ev ? { id: ev.id, d: ev.d, e: ev.e, c: ev.c, t: ev.t, n: ev.n, o: ev.o, cat: catOf(ev.c).label, group: catOf(ev.c).group } : null;
+window.SanterCal = {
+  ready: calReady,
+  /** Eventos oficiais (versão salva no arquivo), sem as camadas de planejamento. */
+  events: () => saved.events.map(pubEvent),
+  event: id => pubEvent(saved.events.find(e => e.id === id)),
+  categories: () => saved.categories.map(c => ({ id: c.id, label: c.label, group: c.group })),
+  canPublish: () => mode === 'server' && !dirtyCount(),
+  /** Cria eventos oficiais. specs: [{ d, e, t, n, c? }] → { ok, ids } */
+  addEvents: specs => persistNow(w => {
+    const cat = (w.categories.find(c => c.id === 'acoes-endomarketing') || w.categories.find(c => c.group === 'endo') || w.categories[0]).id;
+    const ids = specs.map(s => { const id = newId(); w.events.push({ d: s.d, e: s.e && s.e > s.d ? s.e : '', c: s.c && w.categories.some(c => c.id === s.c) ? s.c : cat, t: s.t, n: s.n || '', o: 'novo', inc: [], id }); return id; });
+    return { ids };
+  }, () => Array.isArray(specs) && specs.length > 0 && specs.every(s => dataOk(s.d) && (!s.e || dataOk(s.e)))),
+  /** Atualiza um evento oficial vinculado (só quando o usuário pede). */
+  updateEvent: (id, patch) => persistNow(w => { const x = w.events.find(e => e.id === id); if (x) Object.assign(x, patch); return { found: !!x }; }, () => (!('d' in patch) || dataOk(patch.d)) && (!patch.e || dataOk(patch.e))),
+  openDate: date => { if (/^2027-\d\d-\d\d$/.test(date || '')) openMonth(parts(date).m, { focusDate: date }); },
+  closeOverlays: () => { closePopover(); closeMenu(); closeResults(); if (modalState.open) closeModal(); if (sheetState.open) closeMonth(); if (printState.open) closePrintPreview(); },
+  refreshLayers: () => { rebuildVirtual(); redrawLayers(); }
+};
+
 /* ---------- Início ---------- */
 function start() {
   syncCats();
   checkLocal();
   checkDraft();
   syncCats();
+  rebuildVirtual();
   renderLegend();
   renderYear();
   updateEditbar();
   capsReady = initCaps();
   if (pendingToast) toast(pendingToast);
+  (window.requestIdleCallback || (f => setTimeout(f, 200)))(initLayers, { timeout: 700 });
+  readyResolve();
 }
 if (SEED || mode === 'pending' || !/^https?:$/.test(location.protocol)) {
   start();

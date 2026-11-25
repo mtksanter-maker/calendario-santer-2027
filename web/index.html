@@ -3,14 +3,28 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Calendário de Endomarketing 2027</title>
+<title>Santer · Central de Endomarketing 2027</title>
+<meta name="description" content="Calendário operacional e planejamento de endomarketing 2027 da Santer Empreendimentos.">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- Fonte carregada sem bloquear a primeira pintura (e sem travar o app quando não há internet) -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap"></noscript>
 <style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,-apple-system,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
+<script>try{var t=localStorage.getItem('santer:tema');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);if(localStorage.getItem('santer:vidro')==='off')document.documentElement.setAttribute('data-glass','off')}catch(e){}</script>
+<link rel="stylesheet" href="css/base.css" data-app-css>
 <link rel="stylesheet" href="css/estilo.css" data-app-css>
 </head>
 <body>
-<div id="app"></div>
+<div class="shell">
+  <nav class="rail glass glass-live" id="rail" aria-label="Módulos"></nav>
+  <div class="view" id="view">
+    <section class="mod" id="mod-cal" data-mod="cal" aria-label="Calendário"><div id="app"></div></section>
+    <section class="mod" id="mod-endo" data-mod="endo" aria-label="Endomarketing 2027" hidden></section>
+  </div>
+</div>
+<script src="js/dados.js"></script>
 <script src="js/app.js" id="app-js"></script>
+<script src="js/shell.js"></script>
 </body>
 </html>
