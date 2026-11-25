@@ -1,0 +1,161 @@
+﻿<#
+  Calendário de Endomarketing 2027 — servidor local
+  Serve a pasta web\ em http://localhost:8027 e grava os dados em dados\calendario-2027.json,
+  guardando uma cópia da versão anterior em dados\backups a cada gravação.
+
+  Uso: dois cliques em "Iniciar calendario.bat"
+  Ou:  powershell -ExecutionPolicy Bypass -File servidor.ps1 [-Porta 8028] [-SemNavegador]
+#>
+param(
+  [int]$Porta = 8027,
+  [switch]$SemNavegador
+)
+
+$ErrorActionPreference = 'Stop'
+$raiz = Split-Path -Parent $MyInvocation.MyCommand.Path
+$pastaWeb = [IO.Path]::GetFullPath((Join-Path $raiz 'web'))
+$pastaDados = Join-Path $raiz 'dados'
+$arquivoDados = Join-Path $pastaDados 'calendario-2027.json'
+$pastaBackups = Join-Path $pastaDados 'backups'
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+$maxBackups = 60
+
+$tipos = @{
+  '.html' = 'text/html; charset=utf-8'
+  '.css'  = 'text/css; charset=utf-8'
+  '.js'   = 'text/javascript; charset=utf-8'
+  '.json' = 'application/json; charset=utf-8'
+  '.svg'  = 'image/svg+xml'
+  '.png'  = 'image/png'
+  '.ico'  = 'image/x-icon'
+  '.txt'  = 'text/plain; charset=utf-8'
+}
+
+function Enviar($ctx, [int]$status, [byte[]]$corpo, [string]$tipo) {
+  $res = $ctx.Response
+  $res.StatusCode = $status
+  $res.ContentType = $tipo
+  $res.Headers['Cache-Control'] = 'no-store'
+  $res.Headers['X-Content-Type-Options'] = 'nosniff'
+  $res.ContentLength64 = $corpo.Length
+  $res.OutputStream.Write($corpo, 0, $corpo.Length)
+}
+
+function EnviarTexto($ctx, [int]$status, [string]$texto, [string]$tipo = 'application/json; charset=utf-8') {
+  Enviar $ctx $status ($utf8.GetBytes($texto)) $tipo
+}
+
+# Versão = campo "updated" do JSON (lido como texto, para não depender da conversão de datas do PowerShell)
+function VersaoDe([string]$json) {
+  $m = [regex]::Match($json, '"updated"\s*:\s*"([^"]*)"')
+  if ($m.Success) { return $m.Groups[1].Value }
+  return ''
+}
+
+function TratarApi($ctx) {
+  $req = $ctx.Request
+
+  if ($req.HttpMethod -eq 'GET') {
+    if (-not (Test-Path $arquivoDados)) { EnviarTexto $ctx 404 '{"erro":"sem-dados"}'; return }
+    EnviarTexto $ctx 200 ([IO.File]::ReadAllText($arquivoDados, $utf8))
+    return
+  }
+
+  if ($req.HttpMethod -eq 'PUT') {
+    if ($req.ContentLength64 -gt 10MB) { EnviarTexto $ctx 413 '{"erro":"grande-demais"}'; return }
+    $leitor = New-Object IO.StreamReader($req.InputStream, $utf8)
+    $corpo = $leitor.ReadToEnd()
+    $leitor.Close()
+
+    try { $obj = $corpo | ConvertFrom-Json } catch { EnviarTexto $ctx 400 '{"erro":"json-invalido"}'; return }
+    if ($null -eq $obj.events -or $null -eq $obj.categories) { EnviarTexto $ctx 400 '{"erro":"formato"}'; return }
+
+    $atual = ''
+    if (Test-Path $arquivoDados) { $atual = [IO.File]::ReadAllText($arquivoDados, $utf8) }
+    $versaoAtual = VersaoDe $atual
+    $base = [string]$req.Headers['X-Versao']
+    $forcar = ([string]$req.Headers['X-Sobrescrever']) -eq '1'
+
+    # Alguém salvou depois que esta página abriu: devolve conflito em vez de apagar o trabalho do outro
+    if ($atual -and -not $forcar -and $base -ne $versaoAtual) {
+      EnviarTexto $ctx 409 ('{"erro":"conflito","updated":"' + $versaoAtual + '"}')
+      return
+    }
+
+    if (-not (Test-Path $pastaDados)) { New-Item -ItemType Directory -Path $pastaDados | Out-Null }
+    if ($atual) {
+      if (-not (Test-Path $pastaBackups)) { New-Item -ItemType Directory -Path $pastaBackups | Out-Null }
+      $nome = 'calendario-2027_' + (Get-Date -Format 'yyyy-MM-dd_HH-mm-ss') + '.json'
+      [IO.File]::WriteAllText((Join-Path $pastaBackups $nome), $atual, $utf8)
+      Get-ChildItem $pastaBackups -Filter '*.json' | Sort-Object Name -Descending | Select-Object -Skip $maxBackups | Remove-Item -Force
+    }
+
+    $tmp = $arquivoDados + '.tmp'
+    [IO.File]::WriteAllText($tmp, $corpo, $utf8)
+    Move-Item -Path $tmp -Destination $arquivoDados -Force
+    Write-Host ('  {0}  Calendário salvo.' -f (Get-Date -Format 'HH:mm:ss'))
+    EnviarTexto $ctx 200 ('{"ok":true,"updated":"' + (VersaoDe $corpo) + '"}')
+    return
+  }
+
+  $ctx.Response.Headers['Allow'] = 'GET, PUT'
+  EnviarTexto $ctx 405 '{"erro":"metodo"}'
+}
+
+function TratarArquivo($ctx) {
+  $caminho = [Uri]::UnescapeDataString($ctx.Request.Url.AbsolutePath)
+  if ($caminho -eq '/' -or $caminho -eq '') { $caminho = '/index.html' }
+  $relativo = $caminho.TrimStart('/').Replace('/', '\')
+  $completo = ''
+  try { $completo = [IO.Path]::GetFullPath((Join-Path $pastaWeb $relativo)) } catch { $completo = '' }
+  # Só entrega arquivos de dentro da pasta web\
+  if (-not $completo -or -not $completo.StartsWith($pastaWeb + '\', [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path -LiteralPath $completo -PathType Leaf)) {
+    EnviarTexto $ctx 404 'Não encontrado.' 'text/plain; charset=utf-8'
+    return
+  }
+  $ext = [IO.Path]::GetExtension($completo).ToLowerInvariant()
+  $tipo = 'application/octet-stream'
+  if ($tipos.ContainsKey($ext)) { $tipo = $tipos[$ext] }
+  Enviar $ctx 200 ([IO.File]::ReadAllBytes($completo)) $tipo
+}
+
+$ouvinte = New-Object System.Net.HttpListener
+$endereco = "http://localhost:$Porta/"
+$ouvinte.Prefixes.Add($endereco)
+try {
+  $ouvinte.Start()
+} catch {
+  Write-Host ''
+  Write-Host "  Não foi possível usar a porta $Porta. O calendário talvez já esteja aberto em outra janela." -ForegroundColor Yellow
+  Write-Host '  Para usar outra porta: powershell -ExecutionPolicy Bypass -File servidor.ps1 -Porta 8028'
+  Write-Host ''
+  exit 1
+}
+
+Write-Host ''
+Write-Host '  Calendário de Endomarketing 2027' -ForegroundColor Cyan
+Write-Host "  Aberto em $endereco"
+Write-Host "  Dados em  $arquivoDados"
+Write-Host '  Mantenha esta janela aberta enquanto usa o calendário. Para encerrar, feche a janela ou aperte Ctrl+C.'
+Write-Host ''
+if (-not $SemNavegador) { Start-Process $endereco }
+
+try {
+  while ($ouvinte.IsListening) {
+    $tarefa = $ouvinte.GetContextAsync()
+    # Espera em pedaços curtos para o Ctrl+C funcionar
+    while (-not $tarefa.AsyncWaitHandle.WaitOne(300)) { }
+    $ctx = $tarefa.GetAwaiter().GetResult()
+    try {
+      if ($ctx.Request.Url.AbsolutePath -eq '/api/calendario') { TratarApi $ctx } else { TratarArquivo $ctx }
+    } catch {
+      Write-Host ('  Erro: ' + $_.Exception.Message) -ForegroundColor Red
+      try { EnviarTexto $ctx 500 '{"erro":"interno"}' } catch { }
+    } finally {
+      try { $ctx.Response.Close() } catch { }
+    }
+  }
+} finally {
+  $ouvinte.Stop()
+  $ouvinte.Close()
+}
